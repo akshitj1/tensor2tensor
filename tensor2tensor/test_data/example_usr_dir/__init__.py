@@ -14,3 +14,5 @@
 # limitations under the License.
 """Example T2T user directory."""
 from . import my_submodule
+from . import transformer_sim
+from . import sent_pairs
