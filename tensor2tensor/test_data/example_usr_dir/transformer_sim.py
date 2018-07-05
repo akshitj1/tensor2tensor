@@ -28,8 +28,8 @@ import tensorflow as tf
 @registry.register_model
 class TransformerEncoderSimNet(t2t_model.T2TModel):
     """Transformer, encoder only."""
-
     def body(self, features):
+        gs_t = tf.reshape(tf.to_int32(tf.train.get_global_step()), [1])
         hparams = self._hparams
         # enc_input[2 123 1 128] [batch_size max_sentence_len 1 word_enc_size]
         # print([k for k in features])
@@ -52,16 +52,27 @@ class TransformerEncoderSimNet(t2t_model.T2TModel):
         with tf.variable_scope("foo", reuse=True):
             enc_y = self.encode(in_y, target_space, hparams, features)
 
+        targets = features["targets_raw"]
         enc_out = tf.expand_dims(tf.expand_dims(enc_x, 1),1)
-        if hparams.mode != tf.estimator.ModeKeys.PREDICT:
-            enc_sim = tf.reduce_sum(tf.multiply(enc_x, enc_y), axis=1)# tf.tensordot(encoder_output , encoder_output, axes=0)
-
-            # todo: normalize
-            targets = features["targets_raw"]
-            loss = tf.losses.absolute_difference(tf.reshape(targets, [-1]), enc_sim)#, reduction=tf.losses.Reduction.SUM_OVER_BATCH_SIZE
-            return enc_out, {'training': loss}
-        else:
-            return enc_out
+        # if hparams.mode != tf.estimator.ModeKeys.PREDICT:
+        enc_sim = tf.reduce_sum(tf.multiply(enc_x, enc_y), axis=1)# tf.tensordot(encoder_output , encoder_output, axes=0)
+        enc_sim = tf.abs(enc_sim)
+        # Finding accuracy:
+        acc_mes = tf.reduce_sum(tf.abs(tf.subtract(tf.reshape(targets, [-1]),tf.cast(enc_sim*2,dtype = tf.int32))))
+        acc_mes = 1-tf.div(tf.cast(acc_mes,dtype = tf.float32), tf.cast(tf.shape(targets)[0],dtype = tf.float32))
+        tf.summary.scalar("Training Accuracy", acc_mes)
+        # enc_sim = tf.Print(enc_sim, [gs_t%10,acc_mes],"acc with global step: ", summarize=100)
+        # todo: normalize
+        # targets = tf.Print(targets, [tf.shape(targets), targets],"loss: ", summarize=100)
+        wg_fin = tf.cast(tf.reshape(targets, [-1])*(hparams.data_ratio-1)+1,dtype=tf.float32)
+        loss1 = tf.abs(tf.subtract(tf.cast(tf.reshape(targets, [-1]),dtype=tf.float32), enc_sim))
+        loss = tf.reduce_sum(tf.multiply(loss1, wg_fin))
+        # loss = tf.losses.absolute_difference(tf.reshape(targets, [-1]), enc_sim)#, reduction=tf.losses.Reduction.SUM_OVER_BATCH_SIZE
+        # loss = tf.Print(loss, [tf.shape(loss), loss],"loss: ", summarize=100)
+        loss = tf.div(loss, tf.cast(tf.shape(targets)[0],dtype = tf.float32))
+        return enc_out, {'training': loss}
+        # else:
+        #     return enc_out
             # loss = tf.Print(loss, [loss],"loss: (should be b/w 0-1) ", summarize=100)
         # enc_out = tf.Print(enc_out, [tf.shape(enc_out)],"enc_out", summarize=100)
 
@@ -90,11 +101,28 @@ class TransformerEncoderSimNet(t2t_model.T2TModel):
 
 @registry.register_hparams
 def transformer_sim_net_tiny():
-    hparams = transformer.transformer_tiny()
-    hparams.learning_rate_constant = 0.1
+    hparams = transformer.transformer_base_v2()
+    hparams.optimizer_adam_beta2 = 0.997
+    hparams.optimizer = "Adam"
+    hparams.learning_rate = 0.1
+    hparams.learning_rate_warmup_steps = 4000
+    hparams.learning_rate_schedule = ("linear_warmup*legacy")
     hparams.num_hidden_layers = 4
     hparams.hidden_size = 256
     hparams.filter_size = 512
     hparams.num_heads = 4
-    hparams.batch_size = 256
+    hparams.batch_size = 4096
+    hparams.add_hparam("data_ratio", 4)
+    return hparams
+
+@registry.register_hparams
+def transformer_sim_net_base():
+    hparams = transformer.transformer_base()
+    # hparams.optimizer_adam_beta2 = 0.997
+    # hparams.learning_rate_constant = 0.1
+    # hparams.optimizer = "Adam"
+    # hparams.learning_rate = 0.1
+    # hparams.learning_rate_warmup_steps = 4000
+    # hparams.batch_size = 4096
+    hparams.add_hparam("data_ratio", 4)
     return hparams

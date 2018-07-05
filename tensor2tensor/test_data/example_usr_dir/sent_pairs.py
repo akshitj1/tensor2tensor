@@ -64,9 +64,10 @@ class MultinliProblem(problem.Problem):
     #     else:
     #         return 'multinli_1.0/multinli_1.0_dev_mismatched.jsonl'
 
+
     def _examples(self, data_dir, tmp_dir, train):
         del data_dir
-        base_dir='/Users/akshit.jain/t2t_data/'
+        base_dir='/mnt/data/abhishek.y/Datasets/t2t/t2t_data'
         file_name = osp.join(base_dir,'sim_pairs_train.pk') if train else osp.join(base_dir,'sim_pairs_test.pk')
         with open(file=file_name, mode='rb') as f:
             examples=pk.load(f)
