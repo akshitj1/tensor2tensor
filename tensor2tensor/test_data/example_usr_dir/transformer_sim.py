@@ -19,6 +19,7 @@ from tensor2tensor.layers import common_layers
 from tensor2tensor.models import transformer
 from tensor2tensor.utils import t2t_model
 import tensorflow as tf
+from math import pi
 
 # Use register_model for a new T2TModel
 # Use register_problem for a new Problem
@@ -47,56 +48,50 @@ class TransformerEncoderSimNet(t2t_model.T2TModel):
         # in_x = tf.Print(in_x, [targets],"targets: ", summarize=100)
         target_space = features["target_space_id"]
 
-        with tf.variable_scope("foo"):
-            enc_x = self.encode(in_x, target_space, hparams, features)
-        with tf.variable_scope("foo", reuse=True):
-            enc_y = self.encode(in_y, target_space, hparams, features)
+        with tf.variable_scope("single_sentence_encoder") as scope:
+            enc_x = sim_encode(in_x, target_space, hparams, features)
+            scope.reuse_variables()
+            enc_y = sim_encode(in_y, target_space, hparams, features)
 
         targets = features["targets_raw"]
         enc_out = tf.expand_dims(tf.expand_dims(enc_x, 1),1)
         # if hparams.mode != tf.estimator.ModeKeys.PREDICT:
         enc_sim = tf.reduce_sum(tf.multiply(enc_x, enc_y), axis=1)# tf.tensordot(encoder_output , encoder_output, axes=0)
-        enc_sim = tf.abs(enc_sim)
+        enc_sim = 1 - tf.acos(enc_sim) / tf.constant(pi)
+
         # Finding accuracy:
-        acc_mes = tf.reduce_sum(tf.abs(tf.subtract(tf.reshape(targets, [-1]),tf.cast(enc_sim*2,dtype = tf.int32))))
-        acc_mes = 1-tf.div(tf.cast(acc_mes,dtype = tf.float32), tf.cast(tf.shape(targets)[0],dtype = tf.float32))
-        tf.summary.scalar("Training Accuracy", acc_mes)
+        ground_truth = tf.reshape(targets, [-1])
+        predictions = tf.cast(enc_sim*2,dtype = tf.int32)
+        label_weights = tf.cast(tf.reshape(targets, [-1])*(hparams.data_ratio-1)+1,dtype=tf.float32)
+        _, acc = tf.metrics.accuracy(ground_truth, predictions, label_weights)
+        tf.summary.scalar("Training Accuracy", acc)
         # enc_sim = tf.Print(enc_sim, [gs_t%10,acc_mes],"acc with global step: ", summarize=100)
-        # todo: normalize
         # targets = tf.Print(targets, [tf.shape(targets), targets],"loss: ", summarize=100)
-        wg_fin = tf.cast(tf.reshape(targets, [-1])*(hparams.data_ratio-1)+1,dtype=tf.float32)
-        loss1 = tf.abs(tf.subtract(tf.cast(tf.reshape(targets, [-1]),dtype=tf.float32), enc_sim))
-        loss = tf.reduce_sum(tf.multiply(loss1, wg_fin))
-        # loss = tf.losses.absolute_difference(tf.reshape(targets, [-1]), enc_sim)#, reduction=tf.losses.Reduction.SUM_OVER_BATCH_SIZE
-        # loss = tf.Print(loss, [tf.shape(loss), loss],"loss: ", summarize=100)
-        loss = tf.div(loss, tf.cast(tf.shape(targets)[0],dtype = tf.float32))
-        return enc_out, {'training': loss}
-        # else:
-        #     return enc_out
-            # loss = tf.Print(loss, [loss],"loss: (should be b/w 0-1) ", summarize=100)
-        # enc_out = tf.Print(enc_out, [tf.shape(enc_out)],"enc_out", summarize=100)
+        loss = tf.losses.absolute_difference(tf.reshape(targets, [-1]), enc_sim, reduction=tf.losses.Reduction.NONE)
+        weighted_loss = tf.losses.compute_weighted_loss(loss, label_weights, reduction=tf.losses.Reduction.SUM_OVER_BATCH_SIZE)
+        return enc_out, {'training': weighted_loss}
 
 
-    def encode(self, inputs, target_space, hparams, features):
-        # inputs = tf.Print(inputs, [tf.shape(inputs)], "input", summarize=10)
-        inputs = common_layers.flatten4d3d(inputs)
+def sim_encode(inputs, target_space, hparams, features):
+    # inputs = tf.Print(inputs, [tf.shape(inputs)], "input", summarize=10)
+    inputs = common_layers.flatten4d3d(inputs)
 
-        (encoder_input, encoder_self_attention_bias, _) = (
-            transformer.transformer_prepare_encoder(inputs, target_space, hparams))
+    (encoder_input, encoder_self_attention_bias, _) = (
+        transformer.transformer_prepare_encoder(inputs, target_space, hparams))
 
-        encoder_input = tf.nn.dropout(encoder_input,
-                                      1.0 - hparams.layer_prepostprocess_dropout)
-        encoder_output = transformer.transformer_encoder(
-            encoder_input,
-            encoder_self_attention_bias,
-            hparams,
-            nonpadding=transformer.features_to_nonpadding(features, "inputs"))
+    encoder_input = tf.nn.dropout(encoder_input,
+                                  1.0 - hparams.layer_prepostprocess_dropout)
+    encoder_output = transformer.transformer_encoder(
+        encoder_input,
+        encoder_self_attention_bias,
+        hparams,
+        nonpadding=transformer.features_to_nonpadding(features, "inputs"))
 
-        positional_mean = tf.nn.l2_normalize(tf.reduce_mean(encoder_output, 1), 1)
-        # out_norm = tf.norm(positional_mean)
-        # positional_mean = tf.Print(positional_mean , [out_norm], "enc_out: (should be b_size**0.5) ", summarize=10)
-        # positional_mean = tf.Print(positional_mean , [tf.shape(positional_mean)], "enc_out: (should be (b_size, h_size)) ", summarize=10)
-        return positional_mean
+    positional_mean = tf.nn.l2_normalize(tf.reduce_mean(encoder_output, 1), 1)
+    # out_norm = tf.norm(positional_mean)
+    # positional_mean = tf.Print(positional_mean , [out_norm], "enc_out: (should be b_size**0.5) ", summarize=10)
+    # positional_mean = tf.Print(positional_mean , [tf.shape(positional_mean)], "enc_out: (should be (b_size, h_size)) ", summarize=10)
+    return positional_mean
 
 
 @registry.register_hparams
