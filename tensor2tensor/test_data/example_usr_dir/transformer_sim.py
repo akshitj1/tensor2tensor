@@ -47,7 +47,7 @@ class TransformerEncoderSimNet(t2t_model.T2TModel):
 
         # in_x = tf.Print(in_x, [targets],"targets: ", summarize=100)
         target_space = features["target_space_id"]
-
+        # scope = tf.variable_scope("single_sentence_encoder", reuse=tf.AUTO_REUSE)
         with tf.variable_scope("single_sentence_encoder") as scope:
             enc_x = sim_encode(in_x, target_space, hparams, features)
             scope.reuse_variables()
@@ -63,13 +63,14 @@ class TransformerEncoderSimNet(t2t_model.T2TModel):
         ground_truth = tf.reshape(targets, [-1])
         predictions = tf.cast(enc_sim*2,dtype = tf.int32)
         label_weights = tf.cast(tf.reshape(targets, [-1])*(hparams.data_ratio-1)+1,dtype=tf.float32)
-        _, acc = tf.metrics.accuracy(ground_truth, predictions, label_weights)
+        _, acc = tf.metrics.accuracy(ground_truth, predictions)
         tf.summary.scalar("Training Accuracy", acc)
         # enc_sim = tf.Print(enc_sim, [gs_t%10,acc_mes],"acc with global step: ", summarize=100)
         # targets = tf.Print(targets, [tf.shape(targets), targets],"loss: ", summarize=100)
-        loss = tf.losses.absolute_difference(tf.reshape(targets, [-1]), enc_sim, reduction=tf.losses.Reduction.NONE)
-        weighted_loss = tf.losses.compute_weighted_loss(loss, label_weights, reduction=tf.losses.Reduction.SUM_OVER_BATCH_SIZE)
-        return enc_out, {'training': weighted_loss}
+        # loss = tf.losses.absolute_difference(tf.reshape(targets, [-1]), enc_sim, reduction=tf.losses.Reduction.NONE)
+        loss = tf.losses.log_loss(tf.reshape(targets, [-1]), enc_sim, label_weights, reduction=tf.losses.Reduction.SUM_OVER_BATCH_SIZE)
+        # weighted_loss = tf.losses.compute_weighted_loss(loss, label_weights, reduction=tf.losses.Reduction.SUM_OVER_BATCH_SIZE)
+        return enc_out, {'training': loss}
 
 
 def sim_encode(inputs, target_space, hparams, features):
@@ -78,7 +79,6 @@ def sim_encode(inputs, target_space, hparams, features):
 
     (encoder_input, encoder_self_attention_bias, _) = (
         transformer.transformer_prepare_encoder(inputs, target_space, hparams))
-
     encoder_input = tf.nn.dropout(encoder_input,
                                   1.0 - hparams.layer_prepostprocess_dropout)
     encoder_output = transformer.transformer_encoder(
